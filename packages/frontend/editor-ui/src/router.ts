@@ -370,6 +370,24 @@ export const routes: RouteRecordRaw[] = [
 		},
 	},
 	{
+		path: '/workflow-preview/:id',
+		name: VIEWS.WORKFLOW_PREVIEW,
+		components: {
+			default: async () => await import('@/views/WorkflowPreview.vue'),
+		},
+		meta: {
+			middleware: ['authenticated'],
+			middlewareOptions: {
+				authenticated: {
+					bypass: () => {
+						const settingsStore = useSettingsStore();
+						return settingsStore.isPreviewMode;
+					},
+				},
+			},
+		},
+	},
+	{
 		path: '/workflow/:name/:nodeId?',
 		name: VIEWS.WORKFLOW,
 		components: {
