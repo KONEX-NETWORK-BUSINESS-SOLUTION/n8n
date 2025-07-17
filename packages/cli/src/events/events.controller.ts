@@ -8,7 +8,9 @@ import { EventService } from './event.service';
 export class EventsController {
 	constructor(private readonly eventService: EventService) {}
 
-	@Get('/session-started')
+	@Get('/session-started', {
+		skipAuth: process.env.N8N_PREVIEW_MODE === 'true',
+	})
 	sessionStarted(req: AuthenticatedRequest) {
 		const pushRef = req.headers['push-ref'];
 		this.eventService.emit('session-started', { pushRef });

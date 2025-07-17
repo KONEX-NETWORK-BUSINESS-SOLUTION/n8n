@@ -1,15 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, nextTick } from 'vue';
+import { onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
-import WorkflowCanvas from '@/components/canvas/WorkflowCanvas.vue';
-import { useNodeTypesStore } from '@/stores/nodeTypes.store';
-import { useUIStore } from '@/stores/ui.store';
-import { useWorkflowsStore } from '@/stores/workflows.store';
-import { useCanvasStore } from '@/stores/canvas.store';
 import { useI18n } from '@n8n/i18n';
 import { useToast } from '@/composables/useToast';
-import type { IWorkflowDb } from '@/Interface';
-import { canvasEventBus } from '@/event-bus/canvas';
 
 defineOptions({
 	name: 'WorkflowPreview',
@@ -19,67 +12,51 @@ const route = useRoute();
 const i18n = useI18n();
 const toast = useToast();
 
-const nodeTypesStore = useNodeTypesStore();
-const uiStore = useUIStore();
-const workflowsStore = useWorkflowsStore();
-const canvasStore = useCanvasStore();
+// Component state
+const workflow = ref<any>(null);
+const isLoading = ref(true);
+const error = ref<string | null>(null);
 
-const loading = ref(true);
-const workflow = ref<IWorkflowDb | null>(null);
-
-// Computed properties for readonly canvas
-const editableWorkflow = computed(() => {
-	return workflow.value || { nodes: [], connections: [], pinData: {}, settings: {} };
-});
-
-const editableWorkflowObject = computed(() => {
-	return workflowsStore.getWorkflowFromUrl(editableWorkflow.value);
-});
-
-const workflowId = computed(() => {
-	return route.params.id as string;
-});
+const workflowId = route.params.id as string;
 
 // Load workflow data
 const loadWorkflow = async () => {
 	try {
-		loading.value = true;
-		canvasStore.startLoading();
-		canvasStore.setLoadingText(i18n.baseText('nodeView.loadingWorkflow'));
+		isLoading.value = true;
+		error.value = null;
 
-		const workflowData = await workflowsStore.fetchWorkflow(workflowId.value);
-		workflow.value = workflowData;
+		const response = await fetch(`/rest/workflows/preview/${workflowId}`);
 
-		// Set current workflow for stores
-		workflowsStore.setWorkflow(workflowData);
-		workflowsStore.setActive(true);
+		if (!response.ok) {
+			throw new Error(`HTTP error! status: ${response.status}`);
+		}
 
-		await nextTick();
-		canvasStore.stopLoading();
-		loading.value = false;
+		const data = await response.json();
 
-		// Fit view to show all nodes
-		setTimeout(() => {
-			canvasStore.fitView();
-		}, 100);
-	} catch (error) {
-		console.error('Error loading workflow:', error);
+		// Ensure workflow data has proper structure
+		workflow.value = {
+			id: data.data?.id || data.id,
+			name: data.data?.name || data.name,
+			nodes: data.data?.nodes || data.nodes || [],
+			connections: data.data?.connections || data.connections || {},
+			settings: data.data?.settings || data.settings || {},
+			pinData: data.data?.pinData || data.pinData || {},
+		};
+
+		console.log('Loaded workflow:', workflow.value);
+	} catch (err) {
+		console.error('Error loading workflow:', err);
+		error.value = 'Failed to load workflow';
 		toast.showError(
-			error,
-			i18n.baseText('nodeView.couldntLoadWorkflow'),
-			i18n.baseText('nodeView.couldntLoadWorkflowMessage'),
+			i18n.baseText('workflowPreview.errorLoadingWorkflow'),
+			i18n.baseText('workflowPreview.errorLoadingWorkflowMessage'),
 		);
-		loading.value = false;
-		canvasStore.stopLoading();
+	} finally {
+		isLoading.value = false;
 	}
 };
 
-// Handle viewport changes
-const onViewportChange = (viewport: any) => {
-	canvasStore.setViewport(viewport);
-};
-
-// Initialize on mount
+// Load workflow on mount
 onMounted(async () => {
 	await loadWorkflow();
 });
@@ -87,33 +64,195 @@ onMounted(async () => {
 
 <template>
 	<div class="workflow-preview">
-		<div v-if="loading" class="loading-container">
-			<n8n-loading :loading="true" />
+		<div v-if="isLoading" class="loading">
+			<div class="loading-spinner"></div>
+			<p>{{ i18n.baseText('workflowPreview.loading') }}</p>
 		</div>
-		<WorkflowCanvas
-			v-else
-			:workflow-object="editableWorkflowObject"
-			:event-bus="canvasEventBus"
-			:read-only="true"
-			:executing="false"
-			:key-bindings="false"
-			@viewport:change="onViewportChange"
-		/>
+
+		<div v-else-if="error" class="error-message">
+			<p>{{ error }}</p>
+			<button @click="loadWorkflow">Retry</button>
+		</div>
+
+		<div v-else-if="workflow" class="workflow-content">
+			<h2>{{ workflow.name }}</h2>
+			<div class="workflow-info">
+				<p><strong>ID:</strong> {{ workflow.id }}</p>
+				<p><strong>Nodes:</strong> {{ workflow.nodes.length }}</p>
+				<p><strong>Connections:</strong> {{ Object.keys(workflow.connections).length }}</p>
+			</div>
+
+			<!-- Simple workflow visualization -->
+			<div class="workflow-nodes">
+				<h3>Nodes:</h3>
+				<div v-for="node in workflow.nodes" :key="node.id" class="node-item">
+					<div class="node-header">
+						<strong>{{ node.name }}</strong>
+						<span class="node-type">({{ node.type }})</span>
+					</div>
+					<div class="node-position">
+						Position: [{{ node.position?.[0] || 0 }}, {{ node.position?.[1] || 0 }}]
+					</div>
+				</div>
+			</div>
+
+			<!-- Connections -->
+			<div v-if="Object.keys(workflow.connections).length > 0" class="workflow-connections">
+				<h3>Connections:</h3>
+				<pre>{{ JSON.stringify(workflow.connections, null, 2) }}</pre>
+			</div>
+		</div>
+
+		<div v-else class="error-message">
+			<p>{{ i18n.baseText('workflowPreview.workflowNotFound') }}</p>
+		</div>
 	</div>
 </template>
 
 <style lang="scss" scoped>
 .workflow-preview {
-	width: 100%;
-	height: 100%;
-	position: relative;
+	height: 100vh;
+	width: 100vw;
+	padding: 20px;
+	background: var(--color-background-light);
+	overflow: auto;
 }
 
-.loading-container {
+.loading {
 	display: flex;
-	justify-content: center;
+	flex-direction: column;
 	align-items: center;
+	justify-content: center;
 	height: 100%;
-	width: 100%;
+
+	.loading-spinner {
+		width: 40px;
+		height: 40px;
+		border: 3px solid var(--color-foreground-light);
+		border-top: 3px solid var(--color-primary);
+		border-radius: 50%;
+		animation: spin 1s linear infinite;
+	}
+
+	p {
+		margin-top: 16px;
+		color: var(--color-text-base);
+	}
+}
+
+.error-message {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	height: 100%;
+
+	p {
+		color: var(--color-danger);
+		font-size: 16px;
+		margin-bottom: 16px;
+	}
+
+	button {
+		padding: 8px 16px;
+		background: var(--color-primary);
+		color: white;
+		border: none;
+		border-radius: 4px;
+		cursor: pointer;
+
+		&:hover {
+			background: var(--color-primary-shade-1);
+		}
+	}
+}
+
+.workflow-content {
+	max-width: 1200px;
+	margin: 0 auto;
+
+	h2 {
+		color: var(--color-text-dark);
+		margin-bottom: 20px;
+		font-size: 24px;
+	}
+
+	h3 {
+		color: var(--color-text-base);
+		margin: 20px 0 10px 0;
+		font-size: 18px;
+	}
+}
+
+.workflow-info {
+	background: var(--color-background-base);
+	padding: 16px;
+	border-radius: 8px;
+	margin-bottom: 20px;
+
+	p {
+		margin: 4px 0;
+		color: var(--color-text-base);
+	}
+}
+
+.workflow-nodes {
+	background: var(--color-background-base);
+	padding: 16px;
+	border-radius: 8px;
+	margin-bottom: 20px;
+}
+
+.node-item {
+	background: var(--color-background-light);
+	padding: 12px;
+	margin: 8px 0;
+	border-radius: 6px;
+	border: 1px solid var(--color-foreground-light);
+
+	.node-header {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin-bottom: 4px;
+
+		strong {
+			color: var(--color-text-dark);
+		}
+
+		.node-type {
+			color: var(--color-text-light);
+			font-size: 12px;
+		}
+	}
+
+	.node-position {
+		color: var(--color-text-base);
+		font-size: 12px;
+	}
+}
+
+.workflow-connections {
+	background: var(--color-background-base);
+	padding: 16px;
+	border-radius: 8px;
+
+	pre {
+		background: var(--color-background-light);
+		padding: 12px;
+		border-radius: 4px;
+		overflow-x: auto;
+		font-size: 12px;
+		color: var(--color-text-base);
+	}
+}
+
+@keyframes spin {
+	0% {
+		transform: rotate(0deg);
+	}
+	100% {
+		transform: rotate(360deg);
+	}
 }
 </style>

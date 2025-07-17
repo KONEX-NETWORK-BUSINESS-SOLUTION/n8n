@@ -281,6 +281,45 @@ export class WorkflowsController {
 		return workflowData;
 	}
 
+	@Get('/preview/:workflowId', { skipAuth: true })
+	async getWorkflowPreview(req: WorkflowRequest.Get) {
+		const { workflowId } = req.params;
+
+		// Check if preview mode is enabled
+		if (process.env.N8N_PREVIEW_MODE !== 'true') {
+			throw new ForbiddenError('Preview mode is not enabled');
+		}
+
+		try {
+			const workflow = await this.workflowRepository.findOneBy({ id: workflowId });
+
+			if (!workflow) {
+				throw new NotFoundError(`Workflow with ID "${workflowId}" could not be found.`);
+			}
+
+			// Return only essential data for preview (no sensitive info)
+			const workflowData = {
+				id: workflow.id,
+				name: workflow.name,
+				nodes: workflow.nodes,
+				connections: workflow.connections,
+				settings: workflow.settings,
+				staticData: workflow.staticData,
+				active: workflow.active,
+				createdAt: workflow.createdAt,
+				updatedAt: workflow.updatedAt,
+				versionId: workflow.versionId,
+			};
+
+			return workflowData;
+		} catch (error) {
+			if (error instanceof NotFoundError) {
+				throw error;
+			}
+			throw new InternalServerError('Failed to retrieve workflow for preview');
+		}
+	}
+
 	@Get('/:workflowId')
 	@ProjectScope('workflow:read')
 	async getWorkflow(req: WorkflowRequest.Get) {
